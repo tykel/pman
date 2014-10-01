@@ -49,10 +49,10 @@ int check_pwd(void)
     struct stat st;
     struct termios term, defterm;
     char *p, *vp, *line, *fn_pwd, *fn_salt;
-    unsigned char *hash;
+    unsigned char *sp, *hash;
     FILE *f_pwd, *f_salt;
     int i, cmp, plen;
-    unsigned char salt[HASH_LENGTH];
+    unsigned char salt[SHA256_SALT_SIZE];
 
     /* Create string buffers. */
     fn_pwd = malloc(BUFFER_SIZE);
@@ -62,7 +62,7 @@ int check_pwd(void)
     if(verbose)
         printf("password file: %s\n", fn_pwd);
 
-    hash = (unsigned char *) malloc(HASH_LENGTH);
+    hash = (unsigned char *) malloc(SHA256_HASH_SIZE);
     p = (char *) malloc(BUFFER_SIZE);
     vp = (char *) malloc(BUFFER_SIZE);
     line = (char *) malloc(BUFFER_SIZE);
@@ -83,7 +83,7 @@ int check_pwd(void)
     if(stat(fn_pwd, &st) == -1) {
         int set = 0;
         
-        for(i = 0; i < HASH_LENGTH; ++i)
+        for(i = 0; i < SHA256_SALT_SIZE; ++i)
             salt[i] = (unsigned char) rand256();
         
         printf("Password not set. Please create new one:\n");
@@ -97,31 +97,34 @@ int check_pwd(void)
             sscanf(line, "%255[^\n]", vp);
             printf("\n");
 
-            if(strncmp(p, vp, BUFFER_SIZE-1) != 0) {
+            if(strncmp(p, vp, BUFFER_SIZE-1) != 0)
                 printf("Passwords do not match! Try again:\n");
-            } else {
+            else
                 set = 1;
-            }
         } while(!set);
 
         plen = strlen(p);
-        for(i = 0; i < plen; ++i)
-            p[i] ^= salt[i % HASH_LENGTH];
+        sp = malloc(plen + SHA256_SALT_SIZE);
+        memcpy(sp, p, plen);
+        memcpy((unsigned char *)(sp + plen), salt, SHA256_SALT_SIZE);
+        int i;
+        for(i = 0; i < plen + SHA256_SALT_SIZE; ++i)
+            printf("%02x ", sp[i]);
+        printf("\n");
         
-        hash = sha256(p);
+        hash = sha256(sp);
 
         if(stat(fn_dir, &st) == -1) {
-            if(mkdir(fn_dir, 0700) == -1) {
+            if(mkdir(fn_dir, 0700) == -1)
                 printf("error: %s (%d)\n", strerror(errno), errno);
-            }
         }
 
         f_pwd = fopen(fn_pwd, "wb");
-        fwrite(hash, 1, HASH_LENGTH, f_pwd);
+        fwrite(hash, 1, SHA256_HASH_SIZE, f_pwd);
         fclose(f_pwd);
 
         f_salt = fopen(fn_salt, "wb");
-        fwrite(salt, 1, HASH_LENGTH, f_salt);
+        fwrite(salt, 1, SHA256_SALT_SIZE, f_salt);
         fclose(f_salt);
 
         goto l_checked;
@@ -136,19 +139,21 @@ int check_pwd(void)
     sscanf(line, "%255[^\n]", p);
     printf("\n");
     plen = strlen(p);
-    hash = sha256(p);
     
     f_pwd = fopen(fn_pwd, "rb");
-    fread(vp, 1, HASH_LENGTH, f_pwd);
+    fread(vp, 1, SHA256_HASH_SIZE, f_pwd);
     f_salt = fopen(fn_salt, "rb");
-    fread(salt, 1, HASH_LENGTH, f_salt);
+    fread(salt, 1, SHA256_SALT_SIZE, f_salt);
     
-    for(i = 0; i < plen; ++i)
-        p[i] ^= salt[i % HASH_LENGTH];
-
-    hash = sha256(p);
+    sp = malloc(plen + SHA256_SALT_SIZE);
+    memcpy(sp, p, plen);
+    memcpy((unsigned char *)(sp + plen), salt, SHA256_SALT_SIZE);
+    
+    hash = sha256(sp);
+    free(sp);
+    free(p);
         
-    for(cmp = 1, i = 0; i < HASH_LENGTH; ++i)
+    for(cmp = 1, i = 0; i < SHA256_HASH_SIZE; ++i)
         cmp &= hash[i] == (unsigned char)vp[i];
 
     if(cmp)
@@ -160,7 +165,6 @@ int check_pwd(void)
 l_checked:
     free(fn_pwd);
     free(hash);
-    free(p);
     free(vp);
     free(line);
 
