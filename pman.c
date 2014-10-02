@@ -12,20 +12,23 @@
 
 char *user, *fn_dir;
 int verbose = 0;
-int auth = 0;
 int quit = 0;
 
-const char xor_cipher[] = "fa3520a28b27bf07c2ae03267e4f5a11";
-
-int check_pwd(void);
+int check_pwd(uint8_t *, uint8_t *, uint8_t *);
 int read_cmd(char *);
-void sig_handler(int signo);
+void sig_handler(int);
 
 int main(int argc, char *argv[])
 {
     const char *var = "USER";
     char cmd[BUFFER_SIZE];
-    
+    uint8_t salt[SHA256_SALT_SIZE] = {0}, iv[AES256_BLOCK_SIZE] = {0};
+    uint8_t key[AES256_KEY_SIZE]; 
+    int len, i;
+
+    aes256_encrypt("h", "h", salt, key, iv, &len);
+
+    /* Miscelleneous etup */
     user = getenv(var);
     fn_dir = malloc(BUFFER_SIZE);
     snprintf(fn_dir, BUFFER_SIZE, "/home/%s/.pman", user);
@@ -35,37 +38,41 @@ int main(int argc, char *argv[])
     if(signal(SIGINT, sig_handler) == SIG_ERR)
         fprintf(stderr, "warning: cannot catch Ctrl-C signal\n");
 
-    if(check_pwd()) {
+    /* Check password */
+    if(check_pwd(salt, key, iv)) {
+        /* Interpet commands until done */
         do {
             read_cmd(cmd);           
         } while(!quit);
+    } else {
+        fprintf(stderr, "Authentication failure\n");
     }
     
     return EXIT_SUCCESS;
 }
 
-int check_pwd(void)
+int check_pwd(uint8_t *salt, uint8_t *key, uint8_t *iv)
 {
     struct stat st;
     struct termios term, defterm;
+
     char *p, *vp, *line, *fn_pwd, *fn_salt;
-    unsigned char *sp, *hash;
     FILE *f_pwd, *f_salt;
-    int i, cmp, plen;
-    unsigned char salt[SHA256_SALT_SIZE];
+    int i, cmp, plen, auth;
+
+    auth = 1;
 
     /* Create string buffers. */
-    fn_pwd = malloc(BUFFER_SIZE);
-    fn_salt = malloc(BUFFER_SIZE);
+    fn_pwd = calloc(BUFFER_SIZE, 1);
+    fn_salt = calloc(BUFFER_SIZE, 1);
     snprintf(fn_pwd, BUFFER_SIZE, "%s/pwd", fn_dir);
     snprintf(fn_salt, BUFFER_SIZE, "%s/salt", fn_dir);
     if(verbose)
         printf("password file: %s\n", fn_pwd);
 
-    hash = (unsigned char *) malloc(SHA256_HASH_SIZE);
-    p = (char *) malloc(BUFFER_SIZE);
-    vp = (char *) malloc(BUFFER_SIZE);
-    line = (char *) malloc(BUFFER_SIZE);
+    p = calloc(BUFFER_SIZE, 1);
+    vp = calloc(BUFFER_SIZE, 1);
+    line = calloc(BUFFER_SIZE, 1);
    
     /* Change terminal attributes to disable echo.
      * This hides password input.
@@ -103,16 +110,7 @@ int check_pwd(void)
                 set = 1;
         } while(!set);
 
-        plen = strlen(p);
-        sp = malloc(plen + SHA256_SALT_SIZE);
-        memcpy(sp, p, plen);
-        memcpy((unsigned char *)(sp + plen), salt, SHA256_SALT_SIZE);
-        int i;
-        for(i = 0; i < plen + SHA256_SALT_SIZE; ++i)
-            printf("%02x ", sp[i]);
-        printf("\n");
-        
-        hash = sha256(sp);
+        key = sha256(p, salt);
 
         if(stat(fn_dir, &st) == -1) {
             if(mkdir(fn_dir, 0700) == -1)
@@ -120,7 +118,7 @@ int check_pwd(void)
         }
 
         f_pwd = fopen(fn_pwd, "wb");
-        fwrite(hash, 1, SHA256_HASH_SIZE, f_pwd);
+        fwrite(key, 1, SHA256_HASH_SIZE, f_pwd);
         fclose(f_pwd);
 
         f_salt = fopen(fn_salt, "wb");
@@ -145,26 +143,18 @@ int check_pwd(void)
     f_salt = fopen(fn_salt, "rb");
     fread(salt, 1, SHA256_SALT_SIZE, f_salt);
     
-    sp = malloc(plen + SHA256_SALT_SIZE);
-    memcpy(sp, p, plen);
-    memcpy((unsigned char *)(sp + plen), salt, SHA256_SALT_SIZE);
-    
-    hash = sha256(sp);
-    free(sp);
+    key = sha256(p, salt);
     free(p);
         
     for(cmp = 1, i = 0; i < SHA256_HASH_SIZE; ++i)
-        cmp &= hash[i] == (unsigned char)vp[i];
+        cmp &= key[i] == (unsigned char)vp[i];
 
-    if(cmp)
-        auth = !auth;
-    else
-        printf("Authentication failure\n");
+    if(!cmp)
+        auth = 0;
    
     /* Clear up our buffers. */
 l_checked:
     free(fn_pwd);
-    free(hash);
     free(vp);
     free(line);
 
