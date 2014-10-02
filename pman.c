@@ -14,19 +14,17 @@ char *user, *fn_dir;
 int verbose = 0;
 int quit = 0;
 
-int check_pwd(uint8_t *, uint8_t *, uint8_t *);
+const char *var = "USER";
+
+int check_pwd(uint8_t *, uint8_t *);
 int read_cmd(char *);
 void sig_handler(int);
 
 int main(int argc, char *argv[])
 {
-    const char *var = "USER";
     char cmd[BUFFER_SIZE];
-    uint8_t salt[SHA256_SALT_SIZE] = {0}, iv[AES256_BLOCK_SIZE] = {0};
-    uint8_t key[AES256_KEY_SIZE]; 
     int len, i;
-
-    aes256_encrypt("h", "h", salt, key, iv, &len);
+    uint8_t salt[SHA256_SALT_SIZE], key[AES256_KEY_SIZE];
 
     /* Miscelleneous etup */
     user = getenv(var);
@@ -39,7 +37,7 @@ int main(int argc, char *argv[])
         fprintf(stderr, "warning: cannot catch Ctrl-C signal\n");
 
     /* Check password */
-    if(check_pwd(salt, key, iv)) {
+    if(check_pwd(salt, key)) {
         /* Interpet commands until done */
         do {
             read_cmd(cmd);           
@@ -51,7 +49,7 @@ int main(int argc, char *argv[])
     return EXIT_SUCCESS;
 }
 
-int check_pwd(uint8_t *salt, uint8_t *key, uint8_t *iv)
+int check_pwd(uint8_t *salt, uint8_t *key)
 {
     struct stat st;
     struct termios term, defterm;
