@@ -22,6 +22,7 @@ typedef struct encrypted_entry {
 uint8_t* sha256(char *, uint8_t *);
 int sha256ip(char *, uint8_t *, uint8_t *);
 int rand256(void);
+int generate_salt(uint8_t *);
 
 int entry_aes256_encrypt(encrypted_entry_t *);
 int entry_aes256_decrypt(encrypted_entry_t *);

@@ -5,6 +5,7 @@
 
 #include "util.h"
 
+/* Return a freshly allocated buffer with the password's salted SHA-256 hash */
 uint8_t* sha256(char *password, uint8_t *salt)
 {
     int len;
@@ -22,6 +23,7 @@ uint8_t* sha256(char *password, uint8_t *salt)
     return out;
 }
 
+/* Populate the @out buffer with the password's salted SHA-256 hash */
 int sha256ip(char *password, uint8_t *salt, uint8_t *out)
 {
     int len;
@@ -37,6 +39,7 @@ int sha256ip(char *password, uint8_t *salt, uint8_t *out)
     return 1;
 }
 
+/* Encrypt the @e entry */
 int entry_aes256_encrypt(encrypted_entry_t *e)
 {
     const EVP_CIPHER *cipher;
@@ -64,6 +67,7 @@ int entry_aes256_encrypt(encrypted_entry_t *e)
     return err;
 }
 
+/* Decrypt the @e entry */
 int entry_aes256_decrypt(encrypted_entry_t *e)
 {
     gcry_cipher_hd_t hd;
@@ -85,6 +89,7 @@ int entry_aes256_decrypt(encrypted_entry_t *e)
     return err;
 }
 
+/* Generate a random number with uniform distribution in [0,256) */
 int rand256(void)
 {
     int r;
@@ -95,6 +100,8 @@ int rand256(void)
     return r % 256;
 }
 
+/* Load an entry from @pathname and parse it into @e.
+ * @e is NOT decrypted. */
 int entry_load(char *pathname, encrypted_entry_t* e) 
 {
     struct stat st;
@@ -108,11 +115,11 @@ int entry_load(char *pathname, encrypted_entry_t* e)
     if(dlen < 0 || dlen % AES256_BLOCK_SIZE)
         return 0;
     
-    if(fread(&e->iv, AES256_BLOCK_SIZE, 1, fentry) < AES256_BLOCK_SIZE)
+    if(fread(e->iv, 1, AES256_BLOCK_SIZE, fentry) < AES256_BLOCK_SIZE)
         goto l_e_fail1;
     e->size = dlen;
     e->e_data = malloc(dlen);
-    if(fread(e->e_data, dlen, 1, fentry) < dlen)
+    if(fread(e->e_data, 1, dlen, fentry) < dlen)
         goto l_e_fail2;
     e->d_data = NULL;
 
@@ -126,14 +133,17 @@ l_e_fail1:
     return 0;
 }
 
+/* Write the entry @e to disk at @pathname. */
 int entry_write(char *pathname, encrypted_entry_t *e)
 {
     FILE* fentry;
-    if((fentry = fopen(pathname, "rb")) == NULL)
+    if((fentry = fopen(pathname, "wb")) == NULL)
         return 0;
-    if(fwrite(e->iv, AES256_BLOCK_SIZE, 1, fentry) < AES256_BLOCK_SIZE)
+    if(e->size < AES256_BLOCK_SIZE || e->e_data == NULL)
+        return 0;
+    if(fwrite(e->iv, 1, AES256_BLOCK_SIZE, fentry) < AES256_BLOCK_SIZE)
         goto w_e_fail; 
-    if(fwrite(e->e_data, e->size, 1, fentry) < e->size)
+    if(fwrite(e->e_data, 1, e->size, fentry) < e->size)
         goto w_e_fail;
 
     fclose(fentry);
@@ -145,10 +155,7 @@ w_e_fail:
     return 0;
 }
 
-/* entry_key_iv
- *
- * Generates a random AES-256 initialisation vector.
- */
+/* Generate a random AES-256 initialisation vector and put it in @e. */
 int entry_generate_iv(encrypted_entry_t *e)
 {
     int i;
@@ -156,4 +163,15 @@ int entry_generate_iv(encrypted_entry_t *e)
         e->iv[i] = (uint8_t) rand256();
 
     return 1;
+}
+
+int generate_salt(uint8_t *salt)
+{
+    int i;
+    
+    if(salt == NULL)
+        return 0;
+    for(i = 0; i < SHA256_SALT_SIZE; ++i)
+        salt[i] = (uint8_t) rand256();
+    return SHA256_SALT_SIZE;
 }
