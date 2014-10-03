@@ -22,7 +22,8 @@ int read_cmd(char *, uint8_t *, uint8_t *);
 int handle_cmd_new(uint8_t *);
 int handle_cmd_list(void);
 int handle_cmd_delete(void);
-int handle_cmd_view(uint8_t *);
+int handle_cmd_view(uint8_t *, char *);
+void handle_cmd_clear(void);
 void sig_handler(int);
 
 int main(int argc, char *argv[])
@@ -194,7 +195,7 @@ int read_cmd(char *c, uint8_t *key, uint8_t *salt)
             quit = 1;
             break;
         } else if(!strcmp(tok, "h") || !strcmp(tok, "help")) {
-            printf("Commands: n[ew] l[ist] v[iew]  d[elete]  h[elp]  q[uit]\n");
+            printf("Commands: n[ew] l[ist] v[iew] d[elete] c[lear] h[elp] q[uit]\n");
             break;
         } else if(!strcmp(tok, "n") || !strcmp(tok, "new")) {
             handle_cmd_new(key);
@@ -206,7 +207,13 @@ int read_cmd(char *c, uint8_t *key, uint8_t *salt)
             handle_cmd_delete();
             break;
         } else if(!strcmp(tok, "v") || !strcmp(tok, "view")) {
-            handle_cmd_view(key);
+            char *name = NULL;
+            if((tok = strtok(NULL, " ")) != NULL)
+                name = tok;
+            handle_cmd_view(key, name);
+            break;
+        } else if(!strcmp(tok, "c") || !strcmp(tok, "clear")) {
+            handle_cmd_clear();
             break;
         } else {
             printf("Unknown command\n");
@@ -217,6 +224,12 @@ int read_cmd(char *c, uint8_t *key, uint8_t *salt)
     }
 
     return 1;
+}
+
+void handle_cmd_clear(void)
+{
+    const char clear[] = {27, '[', '2', 'J', 0};
+    printf("%s", clear);
 }
 
 int handle_cmd_new(uint8_t *key)
@@ -249,7 +262,7 @@ int handle_cmd_new(uint8_t *key)
     memset(line, 0, BUFFER_SIZE);
     fgets(line, BUFFER_SIZE-1, stdin);
     
-    if(line[0] == 'y') {
+    if(line[0] == 'y' || line[0] == 'Y') {
         /* Read desired password parameters */
         pmask = 0;
         printf("Add password settings (default=[a-z]):"
@@ -361,22 +374,30 @@ int handle_cmd_list(void)
     return 1;
 }
 
-int handle_cmd_view(uint8_t *key)
+int handle_cmd_view(uint8_t *key, char *cname)
 {
     encrypted_entry_t e;
     struct stat st;
     char line[BUFFER_SIZE], name[BUFFER_SIZE];
     int start;
 
-    snprintf(name, BUFFER_SIZE-1, "%s/", fn_dir);
-    start = strlen(name);
-    do {
-        printf("Name: ");
-        memset(line, 0, BUFFER_SIZE);
-        memset(name + start, 0, BUFFER_SIZE);
-        fgets(line, BUFFER_SIZE-1, stdin);
-        sscanf(line, "%255[^\n]", (char *)(name + start));
-    } while(stat(name, &st) == -1);
+    if(cname != NULL) {
+        snprintf(name, BUFFER_SIZE-1, "%s/%s", fn_dir, cname);
+        if(stat(name, &st) == -1) {
+            printf("Entry '%s' not found\n", name);
+            return 0;
+        }
+    } else {
+        snprintf(name, BUFFER_SIZE-1, "%s/", fn_dir);
+        start = strlen(name);
+        do {
+            printf("Name: ");
+            memset(line, 0, BUFFER_SIZE);
+            memset(name + start, 0, BUFFER_SIZE);
+            fgets(line, BUFFER_SIZE-1, stdin);
+            sscanf(line, "%255[^\n]", (char *)(name + start));
+        } while(stat(name, &st) == -1);
+    }
 
     if(entry_load(name, &e) == 0) {
         printf("error: entry_load failed\n");
