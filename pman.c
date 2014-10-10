@@ -25,6 +25,7 @@ int handle_cmd_delete(void);
 int handle_cmd_view(uint8_t *, char *);
 void handle_cmd_clear(void);
 void sig_handler(int);
+char * getpassword(const char *);
 
 int main(int argc, char *argv[])
 {
@@ -58,7 +59,6 @@ int main(int argc, char *argv[])
 int check_pwd(uint8_t *salt, uint8_t *key)
 {
     struct stat st;
-    struct termios term, defterm;
 
     char *p, *vp, *line, *fn_pwd, *fn_salt;
     FILE *f_pwd, *f_salt;
@@ -74,18 +74,8 @@ int check_pwd(uint8_t *salt, uint8_t *key)
     if(verbose)
         printf("password file: %s\n", fn_pwd);
 
-    p = calloc(BUFFER_SIZE, 1);
-    vp = calloc(BUFFER_SIZE, 1);
     line = calloc(BUFFER_SIZE, 1);
    
-    /* Change terminal attributes to disable echo.
-     * This hides password input.
-     */
-    tcgetattr(STDIN_FILENO, &term);
-    defterm = term;
-    term.c_lflag &= ~ECHO;
-    tcsetattr(STDIN_FILENO, TCSANOW, &term);
-
     /* Password file (~/.pman/pwd) does not exist.
      * Prompt for a new password, and generate a new salt to hash it with.
      * Create ~/.pman if it does not exist.
@@ -99,23 +89,18 @@ int check_pwd(uint8_t *salt, uint8_t *key)
         
         printf("Password not set. Please create new one:\n");
         do {
-            printf("Password: ");
-            fgets(line, BUFFER_SIZE-1, stdin);
-            sscanf(line, "%255[^\n]", p);
-            memset(line, 0, BUFFER_SIZE);
-            printf("\nConfirm Password: ");
-            fgets(line, BUFFER_SIZE-1, stdin);
-            sscanf(line, "%255[^\n]", vp);
-            printf("\n");
-
-            if(strncmp(p, vp, BUFFER_SIZE-1) != 0)
-                printf("Passwords do not match! Try again:\n");
-            else
+            p = getpassword("Password: ");
+            vp = getpassword("Confirm Password: ");
+            if(!strncmp(p, vp, BUFFER_SIZE)) {
                 set = 1;
+            } else {
+                free(p);
+                free(vp);
+                printf("Passwords do not match, try again\n");
+            }
         } while(!set);
 
         sha256ip(p, salt, key);
-        free(p);
 
         if(stat(fn_dir, &st) == -1) {
             if(mkdir(fn_dir, 0700) == -1)
@@ -123,10 +108,18 @@ int check_pwd(uint8_t *salt, uint8_t *key)
         }
 
         f_pwd = fopen(fn_pwd, "wb");
+        if(f_pwd == NULL) {
+            perror("error: ");
+            goto l_checked;
+        }
         fwrite(key, 1, SHA256_HASH_SIZE, f_pwd);
         fclose(f_pwd);
 
         f_salt = fopen(fn_salt, "wb");
+        if(f_salt == NULL) {
+            perror("error: ");
+            goto l_checked;
+        }
         fwrite(salt, 1, SHA256_SALT_SIZE, f_salt);
         fclose(f_salt);
 
@@ -137,19 +130,27 @@ int check_pwd(uint8_t *salt, uint8_t *key)
      * Query for password, and check hash with salt against stored password.
      * Reject if there is no match.
      */
-    printf("Password: ");
-    fgets(line, BUFFER_SIZE-1, stdin);
-    sscanf(line, "%255[^\n]", p);
-    printf("\n");
+    p = getpassword("Password: ");
     plen = strlen(p);
+    vp = malloc(BUFFER_SIZE);
     
     f_pwd = fopen(fn_pwd, "rb");
+    if(f_pwd == NULL) {
+        perror("error: ");
+        goto l_checked;
+    }
     fread(vp, 1, SHA256_HASH_SIZE, f_pwd);
+    fclose(f_pwd);
+
     f_salt = fopen(fn_salt, "rb");
+    if(f_salt == NULL) {
+        perror("error: ");
+        goto l_checked;
+    }
     fread(salt, 1, SHA256_SALT_SIZE, f_salt);
+    fclose(f_salt);
     
     sha256ip(p, salt, key);
-    free(p);
         
     for(cmp = 1, i = 0; i < SHA256_HASH_SIZE; ++i)
         cmp &= key[i] == (unsigned char)vp[i];
@@ -159,11 +160,13 @@ int check_pwd(uint8_t *salt, uint8_t *key)
    
     /* Clear up our buffers. */
 l_checked:
+    memset(p, 0, BUFFER_SIZE);
+    free(p);
     free(fn_pwd);
+    memset(vp, 0, BUFFER_SIZE);
     free(vp);
+    memset(line, 0, BUFFER_SIZE);
     free(line);
-
-    tcsetattr(STDIN_FILENO, TCSANOW, &defterm);
     
     return auth;
 }
@@ -451,4 +454,54 @@ void sig_handler(int signo)
         default:
             break;
     }
+}
+
+char * getpassword(const char *prompt)
+{
+    struct termios term, defterm;
+    char *line, *p;
+    int fd;
+
+    /* Change terminal attributes to disable echo.
+     * This hides password input. */
+    fd = fileno(stdin);
+    if(!isatty(fd))
+        fprintf(stderr, "warning: stdin is not a tty\n");
+    tcgetattr(fd, &term);
+    defterm = term;
+    term.c_lflag &= ~ECHO;
+    tcsetattr(fd, TCSANOW, &term);
+
+    /* Allocate string buffer */
+    line = malloc(BUFFER_SIZE);
+    if(line == NULL) {
+        fprintf(stderr, "error: malloc(%d) failure in getpassword()\n",
+                BUFFER_SIZE);
+        return NULL;
+    }
+
+    /* Print prompt string, if any */
+    if(prompt != NULL)
+        printf("%s", prompt);
+
+    /* Get password, and null terminate */
+    fgets(line, BUFFER_SIZE-1, stdin);
+    if(ferror(stdin)) {
+        fprintf(stderr, "error: fgets failure in getpassword()\n");
+        free(line);
+        return NULL;
+    }
+    for(p = line; p < (char *)(line + BUFFER_SIZE - 1); ++p) {
+        if(*p == '\n') {
+            *p = 0;
+            break;
+        }
+    }
+    line[BUFFER_SIZE - 1] = 0;
+    printf("\n");
+    
+    /* Reset terminal attributes to their previous state */
+    tcsetattr(fd, TCSANOW, &defterm);
+
+    return line;
 }

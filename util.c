@@ -2,6 +2,8 @@
 #include <gcrypt.h>
 #include <openssl/evp.h>
 #include <sys/stat.h>
+#include <unistd.h>
+#include <fcntl.h>
 
 #include "util.h"
 
@@ -92,11 +94,14 @@ int entry_aes256_decrypt(encrypted_entry_t *e)
 /* Generate a random number with uniform distribution in [0,256) */
 int rand256(void)
 {
-    int r;
+    int fd, r;
     long end = RAND_MAX / 256;
     end *= 256;
 
-    while((r = rand()) >= end);
+    fd = open("/dev/urandom", O_RDONLY);
+    while(read(fd, &r, sizeof(int)) >= end) ;
+    close(fd);
+
     return r % 256;
 }
 
