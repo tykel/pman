@@ -180,3 +180,30 @@ int generate_salt(uint8_t *salt)
         salt[i] = (uint8_t) rand256();
     return SHA256_SALT_SIZE;
 }
+
+int entry_generate_salt(encrypted_entry_t *e)
+{
+    generate_salt(e->salt);
+    return 1;
+}
+
+int entry_generate_key(encrypted_entry_t *e, char *password, int passlen)
+{
+    gcrypt_kdf_derive(password, passlen, GCRY_KDF_PBKDF2, GCRY_MD_SHA256,
+            e->salt, SHA256_SALT_SIZE, SHA256_ITERATIONS, AES256_KEY_SIZE, e->key);
+    return 1;
+}
+
+int entry_generate_mac(encrypted_entry_t *e)
+{
+    gcry_mac_hd_t hd;
+
+    gcry_mac_open(&hd, GCRY_MAC_HMAC_SHA256, GCRY_MAC_FLAG_SECURE, NULL);
+    gcry_mac_setkey(hd, e->key, AES256_KEY_SIZE);
+    gcry_mac_setiv(hd, e->iv, AES256_BLOCK_SIZE);
+    gcry_mac_write(hd, e->d_data, size);
+    gcry_mac_read(hd, e->mac, size);
+    gcry_mac_close(hd);
+
+    return 1;
+}
