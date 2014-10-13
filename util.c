@@ -116,10 +116,11 @@ int entry_load(char *pathname, encrypted_entry_t* e)
     if((fentry = fopen(pathname, "rb")) == NULL)
         return 0;
     fstat(fileno(fentry), &st);
-    dlen = st.st_size - AES256_BLOCK_SIZE;
+    dlen = st.st_size - SHA256_SALT_SIZE - AES256_BLOCK_SIZE;
     if(dlen < 0 || dlen % AES256_BLOCK_SIZE)
         return 0;
     
+    fread(e->salt, 1, SHA256_SALT_SIZE, fentry);
     if(fread(e->iv, 1, AES256_BLOCK_SIZE, fentry) < AES256_BLOCK_SIZE)
         goto l_e_fail1;
     e->size = dlen;
@@ -146,6 +147,7 @@ int entry_write(char *pathname, encrypted_entry_t *e)
         return 0;
     if(e->size < AES256_BLOCK_SIZE || e->e_data == NULL)
         return 0;
+    fwrite(e->salt, 1, SHA256_SALT_SIZE, fentry);
     if(fwrite(e->iv, 1, AES256_BLOCK_SIZE, fentry) < AES256_BLOCK_SIZE)
         goto w_e_fail; 
     if(fwrite(e->e_data, 1, e->size, fentry) < e->size)
@@ -189,7 +191,7 @@ int entry_generate_salt(encrypted_entry_t *e)
 
 int entry_generate_key(encrypted_entry_t *e, char *password, int passlen)
 {
-    gcrypt_kdf_derive(password, passlen, GCRY_KDF_PBKDF2, GCRY_MD_SHA256,
+    gcry_kdf_derive(password, passlen, GCRY_KDF_PBKDF2, GCRY_MD_SHA256,
             e->salt, SHA256_SALT_SIZE, SHA256_ITERATIONS, AES256_KEY_SIZE, e->key);
     return 1;
 }
@@ -201,8 +203,8 @@ int entry_generate_mac(encrypted_entry_t *e)
     gcry_mac_open(&hd, GCRY_MAC_HMAC_SHA256, GCRY_MAC_FLAG_SECURE, NULL);
     gcry_mac_setkey(hd, e->key, AES256_KEY_SIZE);
     gcry_mac_setiv(hd, e->iv, AES256_BLOCK_SIZE);
-    gcry_mac_write(hd, e->d_data, size);
-    gcry_mac_read(hd, e->mac, size);
+    gcry_mac_write(hd, e->d_data, e->size);
+    gcry_mac_read(hd, e->mac, &e->size);
     gcry_mac_close(hd);
 
     return 1;
