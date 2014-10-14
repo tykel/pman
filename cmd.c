@@ -4,9 +4,24 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #include <dirent.h>
+#include <termios.h>
 
 #include "util.h"
 #include "cmd.h"
+
+int mygetch(void)
+{
+    struct termios oldt, newt;
+    int ch;
+
+    tcgetattr(STDIN_FILENO, &oldt);
+    newt = oldt;
+    newt.c_lflag &= ~(ICANON | ECHO);
+    tcsetattr(STDIN_FILENO, TCSANOW, &newt);
+    ch = getchar();
+    tcsetattr(STDIN_FILENO, TCSANOW, &oldt);
+    return ch;
+}
 
 int read_cmd(char *password, int passlen)
 {
@@ -40,7 +55,10 @@ int read_cmd(char *password, int passlen)
             handle_cmd_list();
             break;
         } else if(!strcmp(tok, "d") || !strcmp(tok, "delete")) {
-            handle_cmd_delete();
+            char *name = NULL;
+            if((tok = strtok(NULL, " ")) != NULL)
+                name = tok;
+            handle_cmd_delete(name);
             break;
         } else if(!strcmp(tok, "v") || !strcmp(tok, "view")) {
             char *name = NULL;
@@ -181,12 +199,11 @@ int handle_cmd_new(char *password, int passlen)
     
     /* Generate an entry and write it to file */
     entry_generate_salt(&e);
-    entry_generate_key(&e, password, plen);
+    entry_generate_key(&e, password, passlen);
 
     snprintf(filename, BUFFER_SIZE, "%s/%s", fn_dir, name);
     e.size = (plen % AES256_BLOCK_SIZE) == 0 ? plen :
         (plen/AES256_BLOCK_SIZE)*AES256_BLOCK_SIZE + AES256_BLOCK_SIZE;
-    printf("e.size: %d bytes\n", e.size);
     e.d_data = calloc(e.size, 1);
     memcpy(e.d_data, p, plen);
     e.e_data = calloc(e.size, 1);
@@ -231,18 +248,18 @@ int handle_cmd_view(char *cname, char *password, int passlen)
         snprintf(name, BUFFER_SIZE-1, "%s/%s", fn_dir, cname);
         if(stat(name, &st) == -1) {
             printf("Entry '%s' not found\n", name);
-            return 0;
+            return 1;
         }
     } else {
         snprintf(name, BUFFER_SIZE-1, "%s/", fn_dir);
         start = strlen(name);
-        do {
-            printf("Name: ");
-            memset(line, 0, BUFFER_SIZE);
-            memset(name + start, 0, BUFFER_SIZE);
-            fgets(line, BUFFER_SIZE-1, stdin);
-            sscanf(line, "%255[^\n]", (char *)(name + start));
-        } while(stat(name, &st) == -1);
+        printf("Name: ");
+        memset(line, 0, BUFFER_SIZE);
+        memset(name + start, 0, BUFFER_SIZE);
+        fgets(line, BUFFER_SIZE-1, stdin);
+        sscanf(line, "%255[^\n]", (char *)(name + start));
+        if(stat(name, &st) == -1)
+            return 1;
     }
 
     if(entry_load(name, &e) == 0) {
@@ -252,40 +269,57 @@ int handle_cmd_view(char *cname, char *password, int passlen)
     printf("Loading...");
     fflush(stdout);
     entry_generate_key(&e, password, passlen);
+    if(!entry_authenticate(&e)) {
+        fprintf(stderr, "\rAuthentication failed: file was encrypted with"
+                " different password\n");
+        return 1;
+    }
     e.d_data = calloc(e.size, 1);
     entry_aes256_decrypt(&e);
     printf("\rPassword = %s\n", e.d_data);
+    printf("Please clear your screen as soon as possible.\n");
 
-    return 1;
+    return 0;
 }
 
-int handle_cmd_delete(void)
+int handle_cmd_delete(char *cname)
 {
     char entry[BUFFER_SIZE];
     char line[BUFFER_SIZE], name[BUFFER_SIZE], confirm[BUFFER_SIZE];
     struct stat st;
     
+    memset(name, 0, BUFFER_SIZE);
     memset(entry, 0, BUFFER_SIZE);
 
-    do {
+    if(cname != NULL) {
+        snprintf(entry, BUFFER_SIZE-1, "%s/%s", fn_dir, cname);
+        strncpy(name, cname, strlen(cname));
+        if(stat(entry, &st) == -1)
+            return 1;
+    } else {
         printf("Name: ");
         memset(line, 0, BUFFER_SIZE);
         memset(name, 0, BUFFER_SIZE);
         fgets(line, BUFFER_SIZE-1, stdin);
         sscanf(line, "%255[^\n]", name);
         snprintf(entry, BUFFER_SIZE-1, "%s/%s", fn_dir, name);
-    } while(stat(entry, &st) == -1);
+        if(stat(entry, &st) == -1)
+            return 1;
+    }
 
     printf("WARNING: This action is irreversible.\n");
     printf("Please type 'I AM CERTAIN' (excluding quotes) to delete %s.\n", name);
-    do {
         printf("Confirm: ");
         memset(line, 0, BUFFER_SIZE);
         memset(confirm, 0, BUFFER_SIZE);
         fgets(line, BUFFER_SIZE-1, stdin);
         sscanf(line, "%255[^\n]", confirm);
-    } while(strcmp(confirm, "I AM CERTAIN") != 0);
-    unlink(entry);
+    if(strcmp(confirm, "I AM CERTAIN") != 0)
+        printf("Deletion cancelled.\n");
+    else {
+        unlink(entry);
+        printf("Entry '%s' deleted.\n", entry);
+    }
 
     return 1;
 }

@@ -20,7 +20,7 @@ int main(int argc, char *argv[])
     /* Miscelleneous setup */
     user = getenv("USER");
     fn_dir = malloc(BUFFER_SIZE);
-    snprintf(fn_dir, BUFFER_SIZE, "/home/%s/.pman_new", user);
+    snprintf(fn_dir, BUFFER_SIZE, "/home/%s/.pman", user);
     
     /* Check password */
     if(authenticate(&password) != 0)
@@ -116,7 +116,11 @@ int authenticate(char **p)
         for(i = 0, match = 1; i < AES256_KEY_SIZE; ++i)
             match = match && (key[i] == key_stored[i]);
         if(match)
-            printf("Passwords match\n");
+            printf("Authentication OK, welcome\n");
+        else {
+            printf("Authentication failure\n");
+            return 1;
+        }
     /* One or both are missing, so we set up new ones */
     } else {
         char *cp;

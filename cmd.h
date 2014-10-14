@@ -9,7 +9,7 @@
 int read_cmd(char *, int);
 int handle_cmd_new(char *, int);
 int handle_cmd_list(void);
-int handle_cmd_delete(void);
+int handle_cmd_delete(char *);
 int handle_cmd_view(char *, char *, int);
 void handle_cmd_clear(void);
 

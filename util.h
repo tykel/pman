@@ -19,7 +19,7 @@ typedef struct encrypted_entry {
     size_t size;
     uint8_t *e_data;
     uint8_t *d_data;
-    uint8_t mac[AES256_BLOCK_SIZE];
+    uint8_t mac[SHA256_HASH_SIZE];
 } encrypted_entry_t;
 
 uint8_t* sha256(char *, uint8_t *);
@@ -32,6 +32,7 @@ int entry_aes256_decrypt(encrypted_entry_t *);
 int entry_load(char *, encrypted_entry_t *);
 int entry_write(char *, encrypted_entry_t *);
 int entry_generate_iv(encrypted_entry_t *);
+int entry_authenticate(encrypted_entry_t *);
 
 char* getpassword(const char *);
 int authenticate(char **);

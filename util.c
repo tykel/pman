@@ -4,6 +4,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <gpg-error.h>
 
 #include "util.h"
 
@@ -116,16 +117,19 @@ int entry_load(char *pathname, encrypted_entry_t* e)
     if((fentry = fopen(pathname, "rb")) == NULL)
         return 0;
     fstat(fileno(fentry), &st);
-    dlen = st.st_size - SHA256_SALT_SIZE - AES256_BLOCK_SIZE;
+    dlen = st.st_size - SHA256_SALT_SIZE - AES256_BLOCK_SIZE - SHA256_HASH_SIZE;
     if(dlen < 0 || dlen % AES256_BLOCK_SIZE)
         return 0;
     
-    fread(e->salt, 1, SHA256_SALT_SIZE, fentry);
+    if(fread(e->salt, 1, SHA256_SALT_SIZE, fentry) < SHA256_SALT_SIZE)
+        goto l_e_fail1;
     if(fread(e->iv, 1, AES256_BLOCK_SIZE, fentry) < AES256_BLOCK_SIZE)
         goto l_e_fail1;
     e->size = dlen;
     e->e_data = malloc(dlen);
     if(fread(e->e_data, 1, dlen, fentry) < dlen)
+        goto l_e_fail2;
+    if(fread(e->mac, 1, SHA256_HASH_SIZE, fentry) < SHA256_HASH_SIZE)
         goto l_e_fail2;
     e->d_data = NULL;
 
@@ -136,6 +140,7 @@ int entry_load(char *pathname, encrypted_entry_t* e)
 l_e_fail2:
     free(e->e_data);
 l_e_fail1:
+    fclose(fentry);
     return 0;
 }
 
@@ -152,9 +157,10 @@ int entry_write(char *pathname, encrypted_entry_t *e)
         goto w_e_fail; 
     if(fwrite(e->e_data, 1, e->size, fentry) < e->size)
         goto w_e_fail;
+    if(fwrite(e->mac, 1, SHA256_HASH_SIZE, fentry) < SHA256_HASH_SIZE)
+        goto w_e_fail;
 
     fclose(fentry);
-
     return 1;
 
 w_e_fail:
@@ -196,16 +202,45 @@ int entry_generate_key(encrypted_entry_t *e, char *password, int passlen)
     return 1;
 }
 
+void printarr(const char *s, uint8_t *data, size_t n)
+{
+    int i;
+
+    printf("%s", s);
+    for(i = 0; i < n; ++i)
+        printf("%x", 0xff & data[i]);
+    printf("\n");
+}
+
 int entry_generate_mac(encrypted_entry_t *e)
 {
     gcry_mac_hd_t hd;
+    size_t size = SHA256_HASH_SIZE;
 
     gcry_mac_open(&hd, GCRY_MAC_HMAC_SHA256, GCRY_MAC_FLAG_SECURE, NULL);
     gcry_mac_setkey(hd, e->key, AES256_KEY_SIZE);
     gcry_mac_setiv(hd, e->iv, AES256_BLOCK_SIZE);
-    gcry_mac_write(hd, e->d_data, e->size);
-    gcry_mac_read(hd, e->mac, &e->size);
+    gcry_mac_write(hd, e->e_data, e->size);
+    gcry_mac_read(hd, e->mac, &size);
     gcry_mac_close(hd);
 
     return 1;
+}
+
+int entry_authenticate(encrypted_entry_t *e)
+{
+    unsigned int ret;
+    gcry_mac_hd_t hd;
+    unsigned char buffer[32];
+    size_t size = 32;
+
+    ret = gcry_mac_open(&hd, GCRY_MAC_HMAC_SHA256, GCRY_MAC_FLAG_SECURE, NULL);
+    ret = gcry_mac_setkey(hd, e->key, AES256_KEY_SIZE);
+    ret = gcry_mac_setiv(hd, e->iv, AES256_BLOCK_SIZE);
+    ret = gcry_mac_write(hd, e->e_data, e->size);
+    gcry_mac_read(hd, buffer, &size);
+    ret = gcry_mac_verify(hd, e->mac, SHA256_HASH_SIZE);
+    gcry_mac_close(hd);
+
+    return (ret & 65535) == 0;
 }
