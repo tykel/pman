@@ -8,6 +8,14 @@
 #include "util.h"
 #include "cmd.h"
 
+#if defined _WIN32
+#define PMAN_DIR_STRING "\\Users\\%s\\AppData\\Local\\pman"
+#elif defined __APPLE__
+#define PMAN_DIR_STRING "/Users/%s/.pman"
+#else
+#define PMAN_DIR_STRING "/home/%s/.pman"
+#endif
+
 char *user, *fn_dir;
 int verbose = 0;
 int quit = 0;
@@ -20,7 +28,7 @@ int main(int argc, char *argv[])
     /* Miscelleneous setup */
     user = getenv("USER");
     fn_dir = malloc(BUFFER_SIZE);
-    snprintf(fn_dir, BUFFER_SIZE, "/home/%s/.pman", user);
+    snprintf(fn_dir, BUFFER_SIZE, PMAN_DIR_STRING, user);
     
     /* Check password */
     if(authenticate(&password) != 0)
